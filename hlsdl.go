@@ -1,9 +1,11 @@
 package hlsdl
 
 import (
+	"bufio"
 	"bytes"
 	"errors"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
 	"os"
@@ -76,16 +78,44 @@ func wait(wg *sync.WaitGroup) chan bool {
 	return c
 }
 
-func (hlsDl *HlsDl) downloadSegment(segment *Segment) error {
+func (hlsDl *HlsDl) downloadSegment(segment *Segment, buf *bufio.Writer) error {
 	hlsDl.client.SetRetryCount(5).SetRetryWaitTime(time.Second)
-	resp, err := hlsDl.client.R().SetHeaders(hlsDl.headers).SetOutput(segment.Path).Get(segment.URI)
+
+	req := hlsDl.client.R().SetHeaders(hlsDl.headers).SetDoNotParseResponse(true)
+	resp, err := req.Get(segment.URI)
 	if err != nil {
 		return err
 	}
+	defer resp.RawResponse.Body.Close()
+
 	if resp.StatusCode() != http.StatusOK {
 		return errors.New(resp.Status())
 	}
-	return nil
+
+	f, err := os.Create(segment.Path)
+	if err != nil {
+		return err
+	}
+
+	defer func() {
+		err = f.Close()
+		if err != nil {
+			log.Fatalf("failed to close file: %v", err)
+		}
+	}()
+
+	buf.Reset(f)
+
+	_, err = io.Copy(buf, resp.RawResponse.Body)
+	if err != nil {
+		return err
+	}
+
+	err = buf.Flush()
+	if err != nil {
+		return err
+	}
+	return err
 }
 
 func (hlsDl *HlsDl) downloadSegments(segmentsDir string, segments []*Segment) error {
@@ -95,8 +125,16 @@ func (hlsDl *HlsDl) downloadSegments(segmentsDir string, segments []*Segment) er
 	quitChan := make(chan bool)
 	segmentChan := make(chan *Segment)
 	downloadResultChan := make(chan *DownloadResult, hlsDl.workers)
+
+	err := os.MkdirAll(segmentsDir, os.ModePerm)
+	if err != nil {
+		return err
+	}
+
 	for i := 0; i < hlsDl.workers; i++ {
 		go func() {
+			buf := bufio.NewWriter(nil)
+
 			defer wg.Done()
 			for segment := range segmentChan {
 				tried := 0
@@ -107,7 +145,7 @@ func (hlsDl *HlsDl) downloadSegments(segmentsDir string, segments []*Segment) er
 					return
 				default:
 				}
-				if err := hlsDl.downloadSegment(segment); err != nil {
+				if err := hlsDl.downloadSegment(segment, buf); err != nil {
 					if strings.Contains(err.Error(), "connection reset by peer") && tried < 3 {
 						time.Sleep(time.Second)
 						log.Println("Retry download segment ", segment.SeqId)
@@ -176,6 +214,8 @@ func (hlsDl *HlsDl) join(segmentsDir string, segments []*Segment) (string, error
 	}
 	defer f.Close()
 
+	fBuf := bufio.NewWriter(f)
+
 	sort.Slice(segments, func(i, j int) bool {
 		return segments[i].SeqId < segments[j].SeqId
 	})
@@ -190,7 +230,7 @@ func (hlsDl *HlsDl) join(segmentsDir string, segments []*Segment) (string, error
 		if err != nil {
 			return "", err
 		}
-		if _, err := f.Write(d); err != nil {
+		if _, err := fBuf.Write(d); err != nil {
 			return "", err
 		}
 		if err := os.RemoveAll(segment.Path); err != nil {
