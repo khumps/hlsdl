@@ -226,11 +226,11 @@ func (hlsDl *HlsDl) join(segmentsDir string, segments []*Segment) (string, error
 	for _, segment := range segments {
 		buf.Reset()
 
-		d, err := hlsDl.decrypt(segment, &buf)
+		err := hlsDl.decrypt(segment, &buf)
 		if err != nil {
 			return "", err
 		}
-		if _, err := fBuf.Write(d); err != nil {
+		if _, err := fBuf.ReadFrom(&buf); err != nil {
 			return "", err
 		}
 		if err := os.RemoveAll(segment.Path); err != nil {
@@ -262,24 +262,24 @@ func (hlsDl *HlsDl) Download() (string, error) {
 }
 
 // Decrypt descryps a segment
-func (hlsDl *HlsDl) decrypt(segment *Segment, d *bytes.Buffer) ([]byte, error) {
+func (hlsDl *HlsDl) decrypt(segment *Segment, d *bytes.Buffer) error {
 	file, err := os.Open(segment.Path)
 	if err != nil {
-		return nil, err
+		return err
 	}
 	defer file.Close()
 	_, err = d.ReadFrom(file)
 	if err != nil {
-		return nil, err
+		return err
 	}
 	if segment.Key != nil {
 		key, iv, err := hlsDl.getKey(segment)
 		if err != nil {
-			return nil, err
+			return err
 		}
 		err = decryptAES128(d.Bytes(), key, iv)
 		if err != nil {
-			return nil, err
+			return err
 		}
 	}
 
@@ -290,7 +290,7 @@ func (hlsDl *HlsDl) decrypt(segment *Segment, d *bytes.Buffer) ([]byte, error) {
 		}
 	}
 
-	return d.Bytes(), nil
+	return nil
 }
 
 func (hlsDl *HlsDl) getKey(segment *Segment) (key []byte, iv []byte, err error) {
