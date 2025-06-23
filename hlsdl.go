@@ -246,14 +246,13 @@ func (hlsDl *HlsDl) Download() (string, error) {
 	if err != nil {
 		return "", err
 	}
-	segmentsDir := filepath.Join(hlsDl.dir, fmt.Sprintf("%d", hlsDl.startTime))
-	if err := os.MkdirAll(segmentsDir, os.ModePerm); err != nil {
+	if err := os.MkdirAll(hlsDl.segmentsDir(), os.ModePerm); err != nil {
 		return "", err
 	}
-	if err := hlsDl.downloadSegments(segmentsDir, segs); err != nil {
+	if err := hlsDl.downloadSegments(hlsDl.segmentsDir(), segs); err != nil {
 		return "", err
 	}
-	fp, err := hlsDl.join(segmentsDir, segs)
+	fp, err := hlsDl.join(hlsDl.segmentsDir(), segs)
 	if err != nil {
 		return "", err
 	}
@@ -308,6 +307,11 @@ func (hlsDl *HlsDl) getKey(segment *Segment) (key []byte, iv []byte, err error) 
 	}
 	return
 }
+
+func (hlsDl *HlsDl) segmentsDir() string {
+	return filepath.Join(hlsDl.dir, fmt.Sprintf("%d", hlsDl.startTime))
+}
+
 func (hlsDl *HlsDl) GetProgress() float64 {
 	var current int64
 	if hlsDl.enableBar {
@@ -316,4 +320,9 @@ func (hlsDl *HlsDl) GetProgress() float64 {
 		current = atomic.LoadInt64(&hlsDl.segCurrent)
 	}
 	return float64(current) / float64(hlsDl.segTotal)
+}
+
+// Run after to ensure all temp files are deleted (does not delete the final recording)
+func (hlsDl *HlsDl) Cleanup() error {
+	return os.RemoveAll(hlsDl.segmentsDir())
 }
